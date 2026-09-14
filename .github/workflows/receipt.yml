@@ -1,0 +1,111 @@
+# Acceptance receipts (design/LAB1.md 7.1, agenda 7.4 rule 1).
+#
+# Runs on every opened issue. The issue body reaches receipt.py only through an `env:` variable
+# (never `${{ }}` inside `run:`), and the login is the issue author, never a form field. The
+# workflow posts the receipt (or the refusal) as a comment, labels the issue `receipted` and
+# dispatches the receipt to the private grader repo with the fine-grained PAT GRADER_DISPATCH_TOKEN
+# (contents read/write on the grader repo only).
+#
+# Repository settings this file expects: secret GRADER_DISPATCH_TOKEN; optional variable
+# GRADER_REPO (default swasik/itsm-2026-grader); files roster.json and deadlines.json at the root.
+name: receipt
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+# One receipt run per author at a time: two issues opened within seconds are numbered one after the other
+# (the second run lists the first's labels), never both as the same attempt. Queued, never cancelled, so
+# every issue still gets its comment: `queue: max` keeps up to 100 runs pending, while the default `single`
+# would cancel a pending run when a third issue arrives (review of PR 2).
+concurrency:
+  group: receipt-${{ github.event.issue.user.login }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  receipt:
+    name: acceptance receipt
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the submissions repository (parser, roster, deadlines)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.13"
+
+      - name: List the author's prior receipted issues
+        # The issues list endpoint (not /search/issues) is used on purpose: it is strongly
+        # consistent, while the search index lags by up to a minute, which could give two quick
+        # submissions the same attempt number. receipt.py counts by the `lab:` and `kind:` labels.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOGIN: ${{ github.event.issue.user.login }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/issues?state=all&labels=receipted&creator=${LOGIN}&per_page=100" \
+            > prior.json
+          python3 -c 'import json,sys; d=json.load(open("prior.json")); print("prior receipted issues:", sum(len(p) for p in d))'
+
+      - name: Build the receipt
+        id: build
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_CREATED_AT: ${{ github.event.issue.created_at }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 receipt.py run \
+            --roster roster.json --deadlines deadlines.json --prior prior.json --out out
+          echo "--- comment ---"
+          cat out/comment.md
+
+      - name: Post the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: gh issue comment "$ISSUE_NUMBER" --body-file out/comment.md
+
+      - name: Label the issue (`receipted`, `lab:<n>`, `kind:<kind>`; the attempt count reads these, never the body)
+        if: steps.build.outputs.status == 'receipted'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ steps.build.outputs.labels }}
+        run: |
+          args=()
+          IFS=, read -r -a labels <<< "$LABELS"
+          for label in "${labels[@]}"; do args+=(-f "labels[]=$label"); done
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/labels" "${args[@]}" > /dev/null
+
+      - name: Dispatch the receipt to the grader
+        if: steps.build.outputs.status == 'receipted'
+        env:
+          GH_TOKEN: ${{ secrets.GRADER_DISPATCH_TOKEN }}
+          GRADER_REPO: ${{ vars.GRADER_REPO || 'swasik/itsm-2026-grader' }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::secret GRADER_DISPATCH_TOKEN is not set; the receipt was posted but not dispatched"
+            exit 1
+          fi
+          gh api --method POST "repos/${GRADER_REPO}/dispatches" --input out/dispatch.json
+          echo "dispatched event_type=receipt to ${GRADER_REPO}"
+
+      - name: Fail the run when no receipt was issued
+        if: steps.build.outputs.status != 'receipted'
+        env:
+          STATUS: ${{ steps.build.outputs.status }}
+        run: |
+          echo "::error::no receipt issued (status=${STATUS}); see the comment on the issue"
+          exit 1

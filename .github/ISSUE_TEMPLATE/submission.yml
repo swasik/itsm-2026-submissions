@@ -1,0 +1,74 @@
+# Acceptance-receipt request form (design/LAB1.md 7.1). Element ids are the query parameters that
+# `itsmlab submit` prefills (lab, kind, repository, tag, commit, text) and the element labels are
+# the headings receipt.py parses (see FIELD_LABELS there). Change both together.
+name: Receipt request (submission, specs or prediction)
+description: Ask the course bot for an acceptance receipt. One request per issue; the bot answers within a minute.
+title: "[lab] receipt request"
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open this form through `itsmlab submit` so the fields are prefilled. The bot reads only the
+        fields below and the GitHub account that opened the issue; the account must be on the roster
+        with this repository. A refused request never counts as an attempt. Three receipted
+        submissions per lab are the maximum.
+  - type: dropdown
+    id: lab
+    attributes:
+      label: Lab
+      description: The lab number.
+      options:
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - "5"
+        - "6"
+        - "7"
+        - "8"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      description: "submission: a tagged release to grade. specs: freeze your specs before writing code. prediction: bind a prediction text to your current main."
+      options:
+        - submission
+        - specs
+        - prediction
+    validations:
+      required: true
+  - type: input
+    id: repository
+    attributes:
+      label: Repository
+      description: owner/name of your public course repository, exactly as registered in the roster.
+      placeholder: octocat/itsm-2026-svcdesk
+    validations:
+      required: true
+  - type: input
+    id: tag
+    attributes:
+      label: Tag
+      description: Submissions only. The git tag you pushed (for example lab1/v1). Leave empty for specs and prediction.
+      placeholder: lab1/v1
+    validations:
+      required: false
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Specs and prediction only. The 40-character commit SHA on main printed by `itsmlab submit`. Leave empty for submissions.
+      placeholder: 0123456789abcdef0123456789abcdef01234567
+    validations:
+      required: false
+  - type: textarea
+    id: text
+    attributes:
+      label: Text
+      description: Prediction only. The prediction text; its SHA-256 is bound to the commit above. Leave empty otherwise.
+      placeholder: I predict that ...
+    validations:
+      required: false

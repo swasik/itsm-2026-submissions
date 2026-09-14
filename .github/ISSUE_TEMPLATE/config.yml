@@ -1,0 +1,6 @@
+# Blank issues carry no form fields and would only produce a refusal comment.
+blank_issues_enabled: false
+contact_links:
+  - name: Course questions
+    url: https://github.com/swasik/itsm-2026-submissions/discussions
+    about: Questions about the course, the checker or a refused receipt go here, not into an issue.
