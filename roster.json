@@ -1,4 +1,20 @@
 {
   "_comment": "GitHub login -> the student's public course repository (owner/name). Keys starting with _ are ignored. Logins are matched case-insensitively; the repository must match the form field. Import the cohort before accepting submissions.",
-  "swasik": "swasik/itsm-svcdesk"
+  "swasik": "swasik/itsm-svcdesk",
+  "pzx134590": "pzx134590/itsm-2026-pzx134590",
+  "michalpotapiuk": "michalpotapiuk/itsm-2026-potapiukmichal",
+  "jezue": "Jezue/itsm-svcdesk",
+  "michalpacula": "MichalPacula/itsm-svcdesk",
+  "tobiaszizydor": "TobiaszIzydor/itsm-svcdesk",
+  "nikodemkwiecinski": "nikodemkwiecinski/it_services_management",
+  "kamilmatyja": "kamilmatyja/it-service-management",
+  "esdoex": "esdoex/itsm-2026",
+  "kapinioxd": "KapinioxD/Repo",
+  "iwonaszukala": "IwonaSzukala/itsm-svcdesk",
+  "borysstelmaszyk": "BorysStelmaszyk/itsm-2026",
+  "eljjo": "Eljjo/itsm-eljjo",
+  "bartosz-jaroszyk": "Bartosz-Jaroszyk/itsm-2026",
+  "whiperr": "Whiperr/itsm-svcdesk",
+  "adiker": "Adiker/lab1-it-services",
+  "yel1zaveta": "YeL1zaveta/itsm-lab1"
 }
