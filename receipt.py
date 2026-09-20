@@ -371,6 +371,24 @@ def count_prior(prior_issues, current_number: int, lab: int, kind: str) -> int:
     return count
 
 
+def extra_attempts(grants: dict | None, login: str, lab: int) -> int:
+    """Extra submission attempts the lecturer granted this login for this lab (attempt_grants.json).
+
+    Logins are matched case-insensitively, as in the roster, and keys starting with `_` are comments.
+    A grant raises the cap and nothing else: a receipt after `corrections_due` is still `late`, and the
+    grader still records it as not counting."""
+    entries = ((grants or {}).get("labs") or {}).get(str(lab)) or {}
+    wanted = login.strip().lower()
+    for key, value in entries.items():
+        if not key.startswith("_") and key.strip().lower() == wanted:
+            return max(0, int(value))
+    return 0
+
+
+def attempt_limit(grants: dict | None, login: str, lab: int) -> int:
+    return MAX_ATTEMPTS + extra_attempts(grants, login, lab)
+
+
 def parse_instant(value: str, tzname: str = DEFAULT_TIMEZONE) -> datetime:
     """RFC 3339 / ISO 8601; a naive value is local time in `tzname`."""
     dt = datetime.fromisoformat(value.strip())
@@ -491,7 +509,7 @@ def error_comment(reason: str) -> str:
 
 def process(*, body: str, login: str, issue_number: int, created_at: str, run_id: int,
             roster: dict, deadlines: dict, prior_issues, git_base: str = DEFAULT_GIT_BASE,
-            work_dir: str | None = None) -> Outcome:
+            work_dir: str | None = None, grants: dict | None = None) -> Outcome:
     try:
         fields = parse_issue_body(body)
         if not fields:
@@ -502,10 +520,14 @@ def process(*, body: str, login: str, issue_number: int, created_at: str, run_id
         sub = validate_fields(fields)
         repository = check_roster(roster, login, sub.repository)
         attempt = count_prior(prior_issues, issue_number, sub.lab, sub.kind) + 1
-        if sub.kind == "submission" and attempt > MAX_ATTEMPTS:
+        granted = extra_attempts(grants, login, sub.lab)
+        limit = MAX_ATTEMPTS + granted
+        if sub.kind == "submission" and attempt > limit:
+            granted_note = (f" (that cap already includes the {granted} extra attempt(s) the lecturer "
+                            "granted you for this lab)" if granted else "")
             raise ReceiptError(
-                f"you already have {MAX_ATTEMPTS} receipted submissions for lab {sub.lab}; "
-                "a fourth attempt is refused (agenda 7.4 rule 3)"
+                f"you already have {limit} receipted submissions for lab {sub.lab}; "
+                f"attempt {attempt} is refused (agenda 7.4 rule 3){granted_note}"
             )
         url = f"{git_base}{repository}.git"
 
@@ -597,10 +619,17 @@ def write_outputs(outcome: Outcome, out_dir: Path) -> None:
 
 
 def load_json(path: str, default=None):
+    """`default` also covers a missing file: an optional input (--prior, --grants) that was never created
+    must not fail every receipt, while --roster and --deadlines pass no default and still raise."""
     if path is None:
         return default
-    with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        if default is None:
+            raise
+        return default
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -613,6 +642,7 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--roster", required=True, help="roster.json (login -> owner/name)")
     p_run.add_argument("--deadlines", required=True, help="deadlines.json")
     p_run.add_argument("--prior", help="JSON from `gh api --paginate --slurp .../issues?labels=receipted&creator=<login>`")
+    p_run.add_argument("--grants", help="attempt_grants.json (extra submission attempts per lab and login)")
     p_run.add_argument("--out", default="out", help="directory for comment.md, status.txt, receipt.json, dispatch.json")
     p_run.add_argument("--git-base", default=DEFAULT_GIT_BASE, help="prefix for clone URLs (default https://github.com/)")
     p_run.add_argument("--work", default=None, help="directory for the temporary clone (default: system temp)")
@@ -631,7 +661,8 @@ def main(argv: list[str] | None = None) -> int:
         body=env["ISSUE_BODY"], login=env["ISSUE_AUTHOR"], issue_number=int(env["ISSUE_NUMBER"]),
         created_at=env["ISSUE_CREATED_AT"], run_id=int(env["RUN_ID"]),
         roster=load_json(args.roster), deadlines=load_json(args.deadlines),
-        prior_issues=load_json(args.prior, default=[]), git_base=args.git_base, work_dir=args.work,
+        prior_issues=load_json(args.prior, default=[]), grants=load_json(args.grants, default={}),
+        git_base=args.git_base, work_dir=args.work,
     )
     write_outputs(outcome, Path(args.out))
     return 0

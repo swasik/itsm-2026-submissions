@@ -1,0 +1,17 @@
+{
+  "_comment": "Extra submission attempts granted by the lecturer, per lab and GitHub login. Logins are matched case-insensitively, as in roster.json; keys starting with _ are ignored. A grant raises that student's submission cap for that lab above the default of three and does nothing else: it never moves a deadline, so a receipt after corrections_due is still late and still does not count. Record why in the lab's _reason. Live fix: push this file; the next issue picks it up, and a refused issue never costs an attempt.",
+  "labs": {
+    "1": {
+      "_reason": "Stage 1 of the grader failed between 14:37Z and 15:56Z on Saturday 19 September 2026 and graded submissions against an environment in which no service could start (no report.json, no compose.json, `docker compose up --wait` exiting 1). Every affected issue was regraded between 16:00Z and 16:11Z, but by then students had already spent attempts answering faults that were not theirs. Two extra attempts for each student whose submission was graded inside that window; granted 20 September 2026.",
+      "adiker": 2,
+      "borysstelmaszyk": 2,
+      "iwonaszukala": 2,
+      "kamilmatyja": 2,
+      "kapinioxd": 2,
+      "michalpacula": 2,
+      "nikodemkwiecinski": 2,
+      "raqbiedaq": 2,
+      "tobiaszizydor": 2
+    }
+  }
+}

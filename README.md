@@ -33,7 +33,8 @@ minute with a receipt or a refusal. The lecturer maintains `roster.json`, `deadl
    new issue. Refusals never count as attempts. Typical reasons: the account is not on the roster, the
    repository is not the registered one, the tag does not exist on GitHub, a `specs` commit already has
    files under `src/` (only `src/README.md` is allowed) or no file of at least 500 bytes under `specs/`, a
-   fourth submission for the same lab.
+   fourth submission for the same lab (the message names your own cap: it is higher if the lecturer granted
+   you extra attempts after a course-side failure).
 5. `itsmlab receipt error`: the bot itself failed (for example GitHub was unreachable). Not your fault;
    retry later or write to the lecturer.
 
@@ -82,11 +83,16 @@ lecturer sees it in the Actions list.
    `corrections_due` (Saturday 08:00:00 of the next session, the instant after which a receipt is `late`) as
    naive local times in `timezone` (Europe/Warsaw) or with an explicit offset. A lab without an entry refuses
    every receipt for that lab with a clear message, so fill all eight before term.
-4. Secret `GRADER_DISPATCH_TOKEN`: a fine-grained PAT restricted to the private grader repo with
+4. `attempt_grants.json` (optional): extra submission attempts, `"labs": {"<n>": {"<login>": <extra>}}`,
+   logins matched case-insensitively and `_` keys ignored, with the reason in the lab's `_reason`. Use it
+   when a course-side failure cost students attempts: it raises the cap of three for those students only.
+   It moves no deadline, so a receipt after `corrections_due` is still `late` and still does not count. A
+   missing file simply means no grants.
+5. Secret `GRADER_DISPATCH_TOKEN`: a fine-grained PAT restricted to the private grader repo with
    "Contents: Read and write" (what `repository_dispatch` needs). Optional variable `GRADER_REPO` when the
    grader repo is not `swasik/itsm-2026-grader`.
-5. `config.yml` disables blank issues and links a Discussions page for questions; edit or remove that link.
-6. The labels `receipted`, `lab:<n>`, `kind:<kind>` are created automatically on first use; never edit them
+6. `config.yml` disables blank issues and links a Discussions page for questions; edit or remove that link.
+7. The labels `receipted`, `lab:<n>`, `kind:<kind>` are created automatically on first use; never edit them
    by hand on a student's issue, the attempt count depends on them. Runs are serialised per author
    (`concurrency: receipt-<login>` with `queue: max`: pending runs wait, they are never cancelled), so two
    issues opened within seconds get consecutive attempt numbers and both get their comment.

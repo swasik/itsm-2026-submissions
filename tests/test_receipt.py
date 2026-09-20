@@ -310,9 +310,10 @@ def test_comment_format_roundtrip():
 
 # ---------------------------------------------------------------------------- end to end
 
-def run_process(student_repo, body, *, login="octocat", prior=(), created_at=ON_TIME, number=42):
+def run_process(student_repo, body, *, login="octocat", prior=(), created_at=ON_TIME, number=42, grants=None):
     return receipt.process(body=body, login=login, issue_number=number, created_at=created_at, run_id=123,
-                           roster=ROSTER, deadlines=DEADLINES, prior_issues=list(prior), git_base=student_repo["base"])
+                           roster=ROSTER, deadlines=DEADLINES, prior_issues=list(prior), grants=grants,
+                           git_base=student_repo["base"])
 
 
 def test_submission_happy_path(student_repo):
@@ -335,11 +336,59 @@ def test_submission_attempt_counting_and_cap(student_repo):
     assert out.status == "receipted" and out.receipt["attempt"] == 3
     prior.append(prior_issue(3, 1, "submission"))
     out = run_process(student_repo, body, prior=prior)
-    assert out.status == "refused" and "fourth" in out.comment and out.receipt is None
+    assert out.status == "refused" and "attempt 4 is refused" in out.comment and out.receipt is None
+    assert "3 receipted submissions" in out.comment and "granted" not in out.comment
     # Specs receipts are not capped and do not count as submission attempts.
     prior_specs = [prior_issue(n, 1, "specs") for n in (1, 2, 3)]
     out = run_process(student_repo, body, prior=prior_specs)
     assert out.status == "receipted" and out.receipt["attempt"] == 1
+
+
+def test_extra_attempts_lookup():
+    """attempt_grants.json: case-insensitive login, `_` keys are comments, anything absent is zero."""
+    grants = {"_comment": "x", "labs": {"1": {"_reason": "grader outage", "IwonaSzukala": 2, "adiker": 1},
+                                        "2": {"octocat": 5}}}
+    assert receipt.extra_attempts(grants, "iwonaszukala", 1) == 2
+    assert receipt.extra_attempts(grants, " Adiker ", 1) == 1
+    assert receipt.extra_attempts(grants, "octocat", 1) == 0        # granted for lab 2, not lab 1
+    assert receipt.extra_attempts(grants, "octocat", 2) == 5
+    assert receipt.extra_attempts(grants, "_reason", 1) == 0        # a comment key is never a login
+    assert receipt.extra_attempts(grants, "octocat", 3) == 0        # a lab with no grants
+    assert receipt.extra_attempts(None, "octocat", 1) == 0 and receipt.extra_attempts({}, "octocat", 1) == 0
+    assert receipt.extra_attempts({"labs": {"1": {"octocat": -2}}}, "octocat", 1) == 0  # never lowers the cap
+    assert receipt.attempt_limit(grants, "octocat", 2) == receipt.MAX_ATTEMPTS + 5
+
+
+def test_granted_attempts_raise_the_cap_for_that_student_only(student_repo):
+    """A grant of two lets attempts 4 and 5 through and refuses the sixth; another login keeps the cap of
+    three. The grant raises the cap and nothing else: the receipt keys do not change."""
+    body = form_body(lab="1", kind="submission", repository="octocat/svcdesk", tag="lab1/v1")
+    grants = {"labs": {"1": {"OctoCat": 2}}}
+    prior = [prior_issue(n, 1, "submission") for n in (1, 2, 3)]
+    out = run_process(student_repo, body, prior=prior, grants=grants)
+    assert out.status == "receipted" and out.receipt["attempt"] == 4
+    assert "attempt_limit" not in out.receipt and "granted" not in out.receipt
+    prior.append(prior_issue(4, 1, "submission"))
+    out = run_process(student_repo, body, prior=prior, grants=grants)
+    assert out.status == "receipted" and out.receipt["attempt"] == 5
+    prior.append(prior_issue(5, 1, "submission"))
+    out = run_process(student_repo, body, prior=prior, grants=grants)
+    assert out.status == "refused" and "5 receipted submissions" in out.comment
+    assert "attempt 6 is refused" in out.comment and "2 extra attempt(s)" in out.comment
+    # The same history without the grant, and for a login the grant does not name, stops at three.
+    assert run_process(student_repo, body, prior=prior[:3]).status == "refused"
+    assert run_process(student_repo, body, prior=prior[:3], grants={"labs": {"1": {"someone-else": 2}}}
+                       ).status == "refused"
+
+
+def test_a_grant_does_not_move_a_deadline(student_repo):
+    """LAB1.md 10.6: the cap and the deadline are separate. A granted attempt filed after corrections_due
+    is still `late`, which the grader records as not counting."""
+    body = form_body(lab="1", kind="submission", repository="octocat/svcdesk", tag="lab1/v1")
+    prior = [prior_issue(n, 1, "submission") for n in (1, 2, 3)]
+    out = run_process(student_repo, body, prior=prior, grants={"labs": {"1": {"octocat": 2}}},
+                      created_at="2026-09-26T07:30:00Z")  # after corrections_due (Saturday 08:00 CEST)
+    assert out.status == "receipted" and out.receipt["attempt"] == 4 and out.receipt["late"] is True
 
 
 def test_submission_receipt_lists_the_authors_specs_issues(student_repo):

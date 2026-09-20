@@ -7,7 +7,8 @@
 # (contents read/write on the grader repo only).
 #
 # Repository settings this file expects: secret GRADER_DISPATCH_TOKEN; optional variable
-# GRADER_REPO (default swasik/itsm-2026-grader); files roster.json and deadlines.json at the root.
+# GRADER_REPO (default swasik/itsm-2026-grader); files roster.json and deadlines.json at the root
+# (attempt_grants.json too, when any student has extra attempts; a missing file means no grants).
 name: receipt
 
 on:
@@ -66,7 +67,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           python3 receipt.py run \
-            --roster roster.json --deadlines deadlines.json --prior prior.json --out out
+            --roster roster.json --deadlines deadlines.json --prior prior.json \
+            --grants attempt_grants.json --out out
           echo "--- comment ---"
           cat out/comment.md
 
