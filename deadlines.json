@@ -1,10 +1,11 @@
 {
-  "_comment": "Per lab (design/LAB1.md 10.6): attempt1_due is 23:59:59 Europe/Warsaw on the Sunday after the session and is advisory (a receipt after it is recorded as after_attempt1_due: true and still counts); corrections_due is 08:00:00 on the Saturday of the next session (Lab 8: Saturday 30 January 2027, two weeks after the last session) and a receipt after it is late: true, which the grader marks counts: false. Naive timestamps are local time in `timezone`; an explicit offset is accepted too. tests/test_receipt.py checks the weekdays, the hours and the ordering of these instants.",
+  "_comment": "Per lab (design/LAB1.md 10.6): attempt1_due is 23:59:59 Europe/Warsaw on the Sunday after the session and is advisory (a receipt after it is recorded as after_attempt1_due: true and still counts); corrections_due is 08:00:00 on the Saturday of the next session (Lab 8: Saturday 30 January 2027, two weeks after the last session), except where a lab carries an `_extended` note recording a deliberate extension and a receipt after it is late: true, which the grader marks counts: false. Naive timestamps are local time in `timezone`; an explicit offset is accepted too. tests/test_receipt.py checks the weekdays, the hours and the ordering of these instants.",
   "timezone": "Europe/Warsaw",
   "labs": {
     "1": {
       "attempt1_due": "2026-09-20T23:59:59",
-      "corrections_due": "2026-09-26T08:00:00"
+      "corrections_due": "2026-09-27T23:59:59",
+      "_extended": "Lab 1's corrections were extended on 2026-09-25 from Saturday 26 September 08:00 (the start of session 2) to Sunday 27 September 23:59:59, so that students can keep correcting Lab 1 while Lab 2 runs. This is the one lab whose corrections do not close at the next session's start; tests/test_receipt.py records it as the exception."
     },
     "2": {
       "attempt1_due": "2026-09-27T23:59:59",

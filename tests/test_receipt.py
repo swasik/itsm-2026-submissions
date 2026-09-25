@@ -260,17 +260,37 @@ def test_count_prior_reads_labels_never_the_editable_body():
 
 def test_published_deadlines_fall_on_the_published_weekdays():
     """deadlines.json (LAB1.md 10.6): attempt 1 is due Sunday 23:59:59 after the session (advisory); corrections
-    close at the start of the next session, Saturday 08:00:00, Lab 8 on Sat 30 Jan 2027 08:00:00."""
+    close at the start of the next session, Saturday 08:00:00, Lab 8 on Sat 30 Jan 2027 08:00:00.
+
+    A lab may be extended past that, and then it carries an `_extended` note saying so. The rule still has
+    teeth: every lab without that note must fall on the published weekday and hour, and the extension itself
+    is asserted below, so it cannot drift silently.
+    """
     data = json.loads((REPO_ROOT / "deadlines.json").read_text())
     assert data["timezone"] == "Europe/Warsaw" and sorted(data["labs"]) == [str(n) for n in range(1, 9)]
     for lab, entry in data["labs"].items():
         first = receipt.parse_instant(entry["attempt1_due"])
         corrections = receipt.parse_instant(entry["corrections_due"])
         assert first.weekday() == 6 and (first.hour, first.minute, first.second) == (23, 59, 59), lab
-        assert corrections.weekday() == 5 and (corrections.hour, corrections.minute, corrections.second) == (8, 0, 0), lab
+        if "_extended" not in entry:
+            assert corrections.weekday() == 5 and (corrections.hour, corrections.minute, corrections.second) == (8, 0, 0), lab
         assert corrections > first, lab
-    assert data["labs"]["1"]["corrections_due"] == "2026-09-26T08:00:00"
+    # Lab 1 was extended to Sunday evening on 2026-09-25 so it can be corrected while Lab 2 runs.
+    assert data["labs"]["1"]["corrections_due"] == "2026-09-27T23:59:59"
+    assert "_extended" in data["labs"]["1"]
     assert data["labs"]["8"]["corrections_due"] == "2027-01-30T08:00:00"
+    extended = [lab for lab, entry in data["labs"].items() if "_extended" in entry]
+    assert extended == ["1"], f"an extension was added without updating this test: {extended}"
+
+
+def test_lab_1_corrections_now_close_after_lab_2_opens():
+    """The point of the extension: session 2 starts Saturday 08:00 and Lab 1 stays open past it."""
+    data = json.loads((REPO_ROOT / "deadlines.json").read_text())
+    lab1_close = receipt.parse_instant(data["labs"]["1"]["corrections_due"])
+    lab2_first = receipt.parse_instant(data["labs"]["2"]["attempt1_due"])
+    session_2_start = receipt.parse_instant("2026-09-26T08:00:00")
+    assert lab1_close > session_2_start
+    assert lab1_close == lab2_first, "both close Sunday evening, so one announcement covers both"
 
 
 def test_deadlines_are_local_time_in_warsaw():

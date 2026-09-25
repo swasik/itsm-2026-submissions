@@ -80,7 +80,9 @@ lecturer sees it in the Actions list.
    writes nothing on an error; `--merge` keeps existing entries). Live fix: push a corrected `roster.json`; the
    next issue picks it up and a refused issue never costs an attempt.
 3. `deadlines.json`: per lab `attempt1_due` (Sunday 23:59:59 after the session, advisory) and
-   `corrections_due` (Saturday 08:00:00 of the next session, the instant after which a receipt is `late`) as
+   `corrections_due` (Saturday 08:00:00 of the next session, the instant after which a receipt is `late`,
+   unless that lab carries an `_extended` note in `deadlines.json` - Lab 1 was extended on 2026-09-25 to
+   Sunday 27 September 23:59:59, so it can be corrected while Lab 2 runs) as
    naive local times in `timezone` (Europe/Warsaw) or with an explicit offset. A lab without an entry refuses
    every receipt for that lab with a clear message, so fill all eight before term.
 4. `attempt_grants.json` (optional): extra submission attempts, `"labs": {"<n>": {"<login>": <extra>}}`,
