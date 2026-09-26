@@ -485,6 +485,19 @@ def test_prediction_receipt(student_repo):
     assert list(r)[:9] == ["lab", "kind", "login", "repository", "tag", "commit", "tree_sha", "archive_sha256", "text_sha256"]
 
 
+def test_prediction_must_name_the_head_of_main(student_repo):
+    """An older commit of main would back-date the prediction before work already pushed (design/LAB2.md
+    12.18): A is on main but B, which adds src/app.py, was pushed after it."""
+    out = run_process(student_repo, form_body(lab="2", kind="prediction", repository="octocat/svcdesk",
+                                              commit=student_repo["A"], text="45 minutes"))
+    assert out.status == "refused", out.comment
+    assert "not the head of `main`" in out.comment and student_repo["B"] in out.comment
+    # specs receipts are unchanged (Lab 1's corrections were open when this was added)
+    out = run_process(student_repo, form_body(lab="1", kind="specs", repository="octocat/svcdesk",
+                                              commit=student_repo["A"]))
+    assert out.status == "receipted", out.comment
+
+
 def test_cli_run_writes_outputs(student_repo, tmp_path):
     roster = tmp_path / "roster.json"
     roster.write_text(json.dumps(ROSTER))

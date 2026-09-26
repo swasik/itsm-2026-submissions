@@ -10,6 +10,7 @@ Pipeline of `receipt.py run` (all steps of LAB1.md 7.1):
   parse the issue-form body -> validate the fields with strict patterns -> roster check
   -> attempt count (prior issues of the same login labelled `receipted`, `lab:<n>`, `kind:<kind>`)
   -> resolve the tag (git ls-remote --tags, peeling ^{}) or verify the commit is on main
+     (a prediction: the commit is the head of main)
   -> clone at the commit, tree_sha (authoritative) and archive_sha256 (informational)
   -> specs: tree rules; prediction: text_sha256
   -> deadlines.json -> late (after corrections_due) and after_attempt1_due (advisory)
@@ -562,6 +563,15 @@ def process(*, body: str, login: str, issue_number: int, created_at: str, run_id
                 branch, head_sha = head
                 if not is_ancestor(clone, commit, head_sha):
                     raise ReceiptError(f"commit {commit} is not on `{branch}` of {url}; push it first")
+                # A prediction binds the moment it is filed. Naming an older commit of `main` would let it
+                # claim a point in history before work that was already pushed, and the grader decides the
+                # ordering from the commit alone (design/LAB2.md 12.18).
+                if sub.kind == "prediction" and commit != head_sha:
+                    raise ReceiptError(
+                        f"commit {commit} is not the head of `{branch}` ({head_sha}): a prediction must name "
+                        f"the current head of `{branch}`, so that everything already pushed comes before it. "
+                        "Run `itsmlab submit <lab> --kind prediction` again and open the new URL"
+                    )
 
             tree = tree_sha(clone, commit)
             archive = archive_sha256(clone, commit)
