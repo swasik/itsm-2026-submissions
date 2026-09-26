@@ -52,6 +52,7 @@ def student_repo(tmp_path_factory):
     A: specs/spec.md (600 bytes) + src/README.md          <- lightweight tag `specs-only`
     B: adds src/app.py                                    <- annotated tag lab1/v1; main
     C: on branch `feature`, not on main
+    and a second bare repo at <base>/other-student/svcdesk.git whose main is still A (specs pushed, no code yet)
     """
     base = tmp_path_factory.mktemp("remote")
     work = base / "work"
@@ -82,6 +83,11 @@ def student_repo(tmp_path_factory):
     bare.parent.mkdir()
     git("clone", "-q", "--bare", str(work), str(bare), cwd=base)
     git("symbolic-ref", "HEAD", "refs/heads/main", cwd=bare)
+    early = base / "other-student" / "svcdesk.git"
+    early.parent.mkdir()
+    git("clone", "-q", "--bare", str(work), str(early), cwd=base)
+    git("update-ref", "refs/heads/main", a, cwd=early)
+    git("symbolic-ref", "HEAD", "refs/heads/main", cwd=early)
     return {"base": f"file://{base}/", "url": f"file://{bare}", "work": work, "A": a, "B": b, "C": c}
 
 
@@ -463,7 +469,9 @@ def test_blank_issue_is_refused(student_repo):
 
 
 def test_specs_receipt(student_repo):
-    out = run_process(student_repo, form_body(lab="1", kind="specs", repository="octocat/svcdesk", commit=student_repo["A"]))
+    """A specs freeze on the head of main, before any code was pushed (Other-Student's repository)."""
+    out = run_process(student_repo, form_body(lab="1", kind="specs", repository="other-student/svcdesk",
+                                              commit=student_repo["A"]), login="Other-Student")
     assert out.status == "receipted", out.comment
     assert out.receipt["kind"] == "specs" and out.receipt["tag"] is None and out.receipt["commit"] == student_repo["A"]
     # The implementation commit has src/app.py: not a specs freeze.
@@ -485,17 +493,27 @@ def test_prediction_receipt(student_repo):
     assert list(r)[:9] == ["lab", "kind", "login", "repository", "tag", "commit", "tree_sha", "archive_sha256", "text_sha256"]
 
 
-def test_prediction_must_name_the_head_of_main(student_repo):
-    """An older commit of main would back-date the prediction before work already pushed (design/LAB2.md
-    12.18): A is on main but B, which adds src/app.py, was pushed after it."""
-    out = run_process(student_repo, form_body(lab="2", kind="prediction", repository="octocat/svcdesk",
-                                              commit=student_repo["A"], text="45 minutes"))
+@pytest.mark.parametrize("kind, lab, extra", [("specs", "1", {}), ("prediction", "2", {"text": "45 minutes"}),
+                                             ("specs", "3", {})])
+def test_an_ordering_receipt_must_name_the_head_of_main(student_repo, kind, lab, extra):
+    """A is on main, but B, which adds src/app.py, was pushed after it. Naming A would back-date the receipt
+    before work already pushed, and the grader decides the ordering from the commit alone (design/LAB1.md 7.1,
+    LAB2.md 12.18). Lab 3 stands for every later lab: the rule is per kind, not per lab."""
+    deadlines = {**DEADLINES, "labs": {**DEADLINES["labs"], "3": DEADLINES["labs"]["2"]}}
+    out = receipt.process(body=form_body(lab=lab, kind=kind, repository="octocat/svcdesk",
+                                         commit=student_repo["A"], **extra),
+                          login="octocat", issue_number=42, created_at=ON_TIME, run_id=123, roster=ROSTER,
+                          deadlines=deadlines, prior_issues=[], grants=None, git_base=student_repo["base"])
     assert out.status == "refused", out.comment
     assert "not the head of `main`" in out.comment and student_repo["B"] in out.comment
-    # specs receipts are unchanged (Lab 1's corrections were open when this was added)
-    out = run_process(student_repo, form_body(lab="1", kind="specs", repository="octocat/svcdesk",
-                                              commit=student_repo["A"]))
-    assert out.status == "receipted", out.comment
+    assert f"itsmlab submit {lab} --kind {kind}" in out.comment
+
+
+def test_every_kind_but_a_tagged_submission_binds_the_head():
+    """Every kind but `submission` binds the head of main by default, so a kind added for a later lab gets the
+    rule without anyone remembering it. This fails on purpose when a kind is added: decide then whether it
+    proves an ordering (keep the default) or not (exempt it explicitly in `process`)."""
+    assert set(receipt.KINDS) - {"submission"} == {"specs", "prediction"}
 
 
 def test_cli_run_writes_outputs(student_repo, tmp_path):

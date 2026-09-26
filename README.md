@@ -33,6 +33,8 @@ minute with a receipt or a refusal. The lecturer maintains `roster.json`, `deadl
    new issue. Refusals never count as attempts. Typical reasons: the account is not on the roster, the
    repository is not the registered one, the tag does not exist on GitHub, a `specs` commit already has
    files under `src/` (only `src/README.md` is allowed) or no file of at least 500 bytes under `specs/`, a
+   `specs` or `prediction` commit that is no longer the head of `main` (you pushed after running `itsmlab
+   submit`: run it again and open the new URL; a receipt must come before everything already pushed), a
    fourth submission for the same lab (the message names your own cap: it is higher if the lecturer granted
    you extra attempts after a course-side failure).
 5. `itsmlab receipt error`: the bot itself failed (for example GitHub was unreachable). Not your fault;
