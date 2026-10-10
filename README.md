@@ -23,7 +23,8 @@ minute with a receipt or a refusal. The lecturer maintains `roster.json`, `deadl
    lab (three submissions per lab; the first is due on the Sunday after the session, the other two before
    the next session). `after_attempt1_due: true` means the receipt came after the Sunday deadline, which is
    advisory: the attempt still counts. `late: true` means it came after the correction window closed
-   (Saturday 08:00, the start of the next session): it is still graded but does not count. `specs_issues`
+   (Saturday 08:00, the start of the next session): it is still graded and counts with a late penalty
+   the lecturer applies: 10 % until the lecture (13:30) of the next session, 50 % after. `specs_issues`
    (submission receipts only) lists your receipted `specs` issues for the lab; the grader waits for those
    lines in its own log before judging L1-CORE-5, so a specs receipt filed seconds before the submission is
    never missed. The grade itself
@@ -90,7 +91,8 @@ lecturer sees it in the Actions list.
 4. `attempt_grants.json` (optional): extra submission attempts, `"labs": {"<n>": {"<login>": <extra>}}`,
    logins matched case-insensitively and `_` keys ignored, with the reason in the lab's `_reason`. Use it
    when a course-side failure cost students attempts: it raises the cap of three for those students only.
-   It moves no deadline, so a receipt after `corrections_due` is still `late` and still does not count. A
+   It moves no deadline, so a receipt after `corrections_due` is still `late` and still carries the late
+   penalty. A
    missing file simply means no grants.
 5. Secret `GRADER_DISPATCH_TOKEN`: a fine-grained PAT restricted to the private grader repo with
    "Contents: Read and write" (what `repository_dispatch` needs). Optional variable `GRADER_REPO` when the
