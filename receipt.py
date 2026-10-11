@@ -10,9 +10,10 @@ Pipeline of `receipt.py run` (all steps of LAB1.md 7.1):
   parse the issue-form body -> validate the fields with strict patterns -> roster check
   -> attempt count (prior issues of the same login labelled `receipted`, `lab:<n>`, `kind:<kind>`)
   -> resolve the tag (git ls-remote --tags, peeling ^{}) or verify the commit is on main
-     (specs, prediction: the commit is the head of main)
+     (specs, prediction, sarif: the commit is the head of main)
   -> clone at the commit, tree_sha (authoritative) and archive_sha256 (informational)
-  -> specs: tree rules; prediction: text_sha256
+  -> specs: tree rules; prediction: text_sha256; sarif (lab 5): the SARIF files under bakeoff/sarif/ and their
+     sha256, and the head of lab5/canary on the remote (design/LAB5.md 7.2)
   -> deadlines.json -> late (after corrections_due) and after_attempt1_due (advisory)
   -> receipt JSON, the comment text, the repository_dispatch payload
 
@@ -36,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-KINDS = ("submission", "specs", "prediction")
+KINDS = ("submission", "specs", "prediction", "sarif")
 MAX_ATTEMPTS = 3
 LAB_MIN, LAB_MAX = 1, 8
 DEFAULT_GIT_BASE = "https://github.com/"
@@ -64,6 +65,15 @@ SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 SPECS_MIN_BYTES = 500
 SPECS_IGNORED_NAMES = (".gitkeep", "README.md")
 SRC_ALLOWED = ("src/README.md",)
+# Lab 5's `sarif` kind (design/LAB5.md 7.2, CI-SPEC.md P-25): the SARIF the canary run produced, committed under
+# bakeoff/sarif/ of main, receipted before the labels of the student's canary set are revealed.
+SARIF_LAB = 5
+SARIF_DIR = "bakeoff/sarif/"
+SARIF_MIN_FILES, SARIF_MAX_FILES = 1, 20
+SARIF_MAX_BYTES = 5 * 1024 * 1024
+SARIF_VERSION = "2.1.0"
+CANARY_BRANCH = "lab5/canary"
+REGULAR_BLOB_MODES = ("100644", "100755")
 
 
 class ReceiptError(Exception):
@@ -175,11 +185,13 @@ def validate_fields(fields: dict[str, str]) -> Submission:
                 problems.append(f"Commit, when given, must be a 40-hex SHA, got {commit_raw!r}")
             else:
                 commit = commit_raw.lower()
-    elif kind in ("specs", "prediction"):
+    elif kind in ("specs", "prediction", "sarif"):
         if not SHA_RE.match(commit_raw):
             problems.append(f"Commit must be the 40-hex SHA printed by `itsmlab submit`, got {commit_raw!r}")
         else:
             commit = commit_raw.lower()
+        if kind == "sarif" and lab and lab != SARIF_LAB:
+            problems.append(f"Kind sarif exists for lab {SARIF_LAB} only (the bake-off's SARIF), got lab {lab}")
         if kind == "prediction":
             if not text_raw.strip():
                 problems.append("Text is required for a prediction")
@@ -329,6 +341,69 @@ def specs_tree_problems(entries: list[tuple[str, int, str]]) -> list[str]:
     return problems
 
 
+def remote_branch_head(url: str, branch: str) -> str | None:
+    """The commit `refs/heads/<branch>` points to on the remote, or None when the branch does not exist."""
+    out = git("ls-remote", "--heads", url, f"refs/heads/{branch}")
+    for line in out.splitlines():
+        sha, _, ref = line.partition("\t")
+        if ref == f"refs/heads/{branch}":
+            return sha.lower()
+    return None
+
+
+def sarif_files(repo: Path, commit: str) -> dict[str, str]:
+    """design/LAB5.md 7.2: {path: sha256 of the blob's bytes} of `bakeoff/sarif/*.sarif` at `commit`, or a
+    ReceiptError listing every problem. The directory must hold 1 to 20 regular files named `*.sarif` and nothing
+    else (no subdirectory, no symbolic link), each at most 5 MB and each a JSON document with `"version": "2.1.0"` and
+    a `runs` list. The digest is of the exact bytes git stores, which is what `sha256sum` prints for the file in the
+    working tree and what an attestation's subject names: nothing is decoded or re-encoded before hashing."""
+    out = git("ls-tree", "-r", "-l", "-z", "--full-tree", commit, "--", SARIF_DIR.rstrip("/"), cwd=repo)
+    problems: list[str] = []
+    blobs: list[tuple[str, str, int]] = []
+    for record in out.split("\0"):
+        if not record:
+            continue
+        meta, _, path = record.partition("\t")
+        mode, kind, sha, size = (meta.split() + ["", "", "", ""])[:4]
+        if not path.startswith(SARIF_DIR):
+            continue
+        name = path[len(SARIF_DIR):]
+        if kind != "blob" or mode not in REGULAR_BLOB_MODES:
+            what = "a symbolic link" if mode == "120000" else ("a submodule" if kind == "commit" else "not a regular file")
+            problems.append(f"{path} is {what}; {SARIF_DIR} must hold the SARIF files themselves")
+        elif "/" in name:
+            problems.append(f"{path} is in a subdirectory; put the SARIF files directly in {SARIF_DIR}")
+        elif not name.endswith(".sarif"):
+            problems.append(f"{path} is not named *.sarif; {SARIF_DIR} must hold the SARIF files only")
+        elif not size.isdigit() or int(size) > SARIF_MAX_BYTES:
+            problems.append(f"{path} is {size} bytes, above the {SARIF_MAX_BYTES} byte (5 MB) limit")
+        else:
+            blobs.append((path, sha, int(size)))
+    if not problems and not SARIF_MIN_FILES <= len(blobs) <= SARIF_MAX_FILES:
+        problems.append(
+            f"the tree has {len(blobs)} SARIF files under {SARIF_DIR}; it must have {SARIF_MIN_FILES} to "
+            f"{SARIF_MAX_FILES} (download the artifact `sarif` of the lab5/canary run into {SARIF_DIR}, commit it "
+            "and push main)" if not blobs else
+            f"the tree has {len(blobs)} files under {SARIF_DIR}; at most {SARIF_MAX_FILES} are accepted")
+    digests: dict[str, str] = {}
+    for path, sha, _ in blobs:
+        data = subprocess.run(["git", "cat-file", "blob", sha], cwd=repo, capture_output=True, check=True).stdout
+        try:
+            doc = json.loads(data)
+        except (ValueError, UnicodeDecodeError):
+            problems.append(f"{path} is not a JSON document")
+            continue
+        if not isinstance(doc, dict) or doc.get("version") != SARIF_VERSION or not isinstance(doc.get("runs"), list):
+            problems.append(f"{path} is not SARIF {SARIF_VERSION}: it needs `\"version\": \"{SARIF_VERSION}\"` and a "
+                            "`runs` list")
+            continue
+        digests[path] = hashlib.sha256(data).hexdigest()
+    if problems:
+        raise ReceiptError("the commit does not hold the bake-off's SARIF (CI-SPEC.md P-25, P-26):\n"
+                           + "\n".join(f"- {p}" for p in problems))
+    return dict(sorted(digests.items()))
+
+
 # ----------------------------------------------------------------------------------------------
 # Attempts, deadlines, receipt
 # ----------------------------------------------------------------------------------------------
@@ -449,7 +524,8 @@ def _is_int(value) -> bool:
 def build_receipt(sub: Submission, *, login: str, repository: str, commit: str, tree: str,
                   archive: str, attempt: int, late: bool, received_at: str, issue: int,
                   run_id: int, text_sha256: str | None = None, after_attempt1_due: bool = False,
-                  specs_issues: list[int] | None = None) -> dict:
+                  specs_issues: list[int] | None = None, canary_commit: str | None = None,
+                  sarif: dict[str, str] | None = None) -> dict:
     receipt = {
         "lab": sub.lab,
         "kind": sub.kind,
@@ -462,6 +538,10 @@ def build_receipt(sub: Submission, *, login: str, repository: str, commit: str, 
     }
     if sub.kind == "prediction":
         receipt["text_sha256"] = text_sha256
+    if sub.kind == "sarif":
+        # design/LAB5.md 7.2: the head of lab5/canary on the remote (C) and every SARIF file's sha256
+        receipt["canary_commit"] = canary_commit
+        receipt["sarif"] = dict(sarif or {})
     receipt.update({
         "attempt": attempt,
         "late": late,
@@ -566,7 +646,8 @@ def process(*, body: str, login: str, issue_number: int, created_at: str, run_id
                 # A specs or prediction receipt (and any later kind that is not a tagged submission) proves an
                 # ordering: this came before that work. The grader decides it from the commit alone, so naming
                 # an older commit of `main` would back-date the receipt before work already pushed. It must
-                # name the head (design/LAB1.md 7.1, LAB2.md 12.18).
+                # name the head (design/LAB1.md 7.1, LAB2.md 12.18). Lab 5's `sarif` binds the head too
+                # (design/LAB5.md 7.2): the SARIF is committed to main before the labels are revealed.
                 if commit != head_sha:
                     raise ReceiptError(
                         f"commit {commit} is not the head of `{branch}` ({head_sha}): a {sub.kind} receipt must "
@@ -577,7 +658,20 @@ def process(*, body: str, login: str, issue_number: int, created_at: str, run_id
             tree = tree_sha(clone, commit)
             archive = archive_sha256(clone, commit)
             text_sha = None
-            if sub.kind == "specs":
+            canary_commit = None
+            sarif = None
+            if sub.kind == "sarif":
+                sarif = sarif_files(clone, commit)
+                try:
+                    canary_commit = remote_branch_head(url, CANARY_BRANCH)
+                except subprocess.CalledProcessError as exc:
+                    raise ReceiptError(f"cannot list the branches of {url}: {git_error_text(exc)}") from None
+                if canary_commit is None:
+                    raise ReceiptError(
+                        f"branch `{CANARY_BRANCH}` does not exist on {url}: the SARIF receipt names the canary commit "
+                        f"whose run produced the SARIF (CI-SPEC.md P-07, P-25). Push it (`git push origin "
+                        f"{CANARY_BRANCH}`), wait for its run, and open a new issue")
+            elif sub.kind == "specs":
                 problems = specs_tree_problems(list_tree(clone, commit))
                 if problems:
                     raise ReceiptError(
@@ -594,6 +688,7 @@ def process(*, body: str, login: str, issue_number: int, created_at: str, run_id
             attempt=attempt, late=late, received_at=created_at, issue=issue_number, run_id=run_id,
             text_sha256=text_sha, after_attempt1_due=after_first,
             specs_issues=prior_specs_issues(prior_issues, issue_number, sub.lab) if sub.kind == "submission" else None,
+            canary_commit=canary_commit, sarif=sarif,
         )
         return Outcome("receipted", format_comment(receipt), receipt)
     except ReceiptError as exc:

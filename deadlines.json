@@ -5,7 +5,7 @@
     "1": {
       "attempt1_due": "2026-09-20T23:59:59",
       "corrections_due": "2026-09-27T23:59:59",
-      "_extended": "Lab 1's corrections were extended on 2026-09-25 from Saturday 26 September 08:00 (the start of session 2) to Sunday 27 September 23:59:59, so that students can keep correcting Lab 1 while Lab 2 runs. This is the one lab whose corrections do not close at the next session's start; tests/test_receipt.py records it as the exception."
+      "_extended": "Lab 1's corrections were extended on 2026-09-25 from Saturday 26 September 08:00 (the morning of session 2) to Sunday 27 September 23:59:59, so that students can keep correcting Lab 1 while Lab 2 runs. This is the one lab whose corrections do not close at the next session's start; tests/test_receipt.py records it as the exception."
     },
     "2": {
       "attempt1_due": "2026-09-27T23:59:59",

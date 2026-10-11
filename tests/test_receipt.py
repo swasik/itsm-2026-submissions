@@ -290,7 +290,7 @@ def test_published_deadlines_fall_on_the_published_weekdays():
 
 
 def test_lab_1_corrections_now_close_after_lab_2_opens():
-    """The point of the extension: session 2 starts Saturday 08:00 and Lab 1 stays open past it."""
+    """The point of the extension: the session-2 deadline is Saturday 08:00 and Lab 1 stays open past it."""
     data = json.loads((REPO_ROOT / "deadlines.json").read_text())
     lab1_close = receipt.parse_instant(data["labs"]["1"]["corrections_due"])
     lab2_first = receipt.parse_instant(data["labs"]["2"]["attempt1_due"])
@@ -512,8 +512,9 @@ def test_an_ordering_receipt_must_name_the_head_of_main(student_repo, kind, lab,
 def test_every_kind_but_a_tagged_submission_binds_the_head():
     """Every kind but `submission` binds the head of main by default, so a kind added for a later lab gets the
     rule without anyone remembering it. This fails on purpose when a kind is added: decide then whether it
-    proves an ordering (keep the default) or not (exempt it explicitly in `process`)."""
-    assert set(receipt.KINDS) - {"submission"} == {"specs", "prediction"}
+    proves an ordering (keep the default) or not (exempt it explicitly in `process`). Lab 5's `sarif` keeps the
+    default (design/LAB5.md 7.2): the SARIF is on main before the labels are revealed."""
+    assert set(receipt.KINDS) - {"submission"} == {"specs", "prediction", "sarif"}
 
 
 def test_cli_run_writes_outputs(student_repo, tmp_path):
@@ -568,3 +569,194 @@ def test_cli_parse():
     body = form_body(lab="1", kind="specs", repository="octocat/svcdesk", commit="a" * 40)
     result = subprocess.run([sys.executable, str(RECEIPT_PY), "parse"], input=body, capture_output=True, text=True, check=True)
     assert json.loads(result.stdout)["commit"] == "a" * 40
+
+
+# ---------------------------------------------------------------------------- lab 5: the `sarif` kind
+
+LAB5_DEADLINES = {"timezone": "Europe/Warsaw", "labs": {
+    **DEADLINES["labs"],
+    "4": {"attempt1_due": "2026-10-25T23:59:59", "corrections_due": "2026-11-14T08:00:00"},
+    "5": {"attempt1_due": "2026-11-15T23:59:59", "corrections_due": "2026-11-28T08:00:00"}}}
+LAB5_RECEIVED = "2026-11-14T13:05:00Z"
+
+
+def sarif_doc(driver: str, results: int = 1) -> bytes:
+    """A small SARIF 2.1.0 document as a scanner writes it (indented, trailing newline)."""
+    doc = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+           "runs": [{"tool": {"driver": {"name": driver, "rules": []}},
+                     "results": [{"ruleId": f"R{n}", "message": {"text": "finding"},
+                                  "locations": [{"physicalLocation": {"artifactLocation": {"uri": "lab5-canary/x.py"},
+                                                                      "region": {"startLine": n + 1}}}]}
+                                 for n in range(results)]}]}
+    return (json.dumps(doc, indent=2) + "\n").encode()
+
+
+FIVE = {f"bakeoff/sarif/{name}.sarif": sarif_doc(driver) for name, driver in
+        (("trivy", "Trivy"), ("grype", "grype"), ("osv-scanner", "osv-scanner"), ("gitleaks", "gitleaks"),
+         ("semgrep", "Semgrep OSS"))}
+
+
+def make_lab5_repo(base: Path, owner: str, files: dict[str, bytes | str], *, canary: bool = True,
+                   symlinks: dict[str, str] | None = None) -> dict:
+    """A bare repo <base>/<owner>/svcdesk.git: M (main, no SARIF), C on lab5/canary (M + a set file), then S on main
+    (M + `files`, symlinks as git stores them). Returns the commits."""
+    work = base / f"work-{owner}"
+    work.mkdir(parents=True)
+    git("init", "-q", "-b", "main", cwd=work)
+    git("config", "user.email", "s@example.com", cwd=work)
+    git("config", "user.name", "Student", cwd=work)
+    (work / "README.md").write_text("svcdesk\n")
+    git("add", ".", cwd=work)
+    git("commit", "-q", "-m", "M", cwd=work)
+    m = git("rev-parse", "HEAD", cwd=work)
+    c = None
+    if canary:
+        git("checkout", "-q", "-b", "lab5/canary", cwd=work)
+        (work / "lab5-canary").mkdir()
+        (work / "lab5-canary" / "README.md").write_text(f"canary set of {owner}\n")
+        git("add", ".", cwd=work)
+        git("commit", "-q", "-m", f"lab5: canary set for {owner}", cwd=work)
+        c = git("rev-parse", "HEAD", cwd=work)
+        git("checkout", "-q", "main", cwd=work)
+    for path, content in files.items():
+        target = work / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content if isinstance(content, bytes) else content.encode())
+    for path, points_to in (symlinks or {}).items():
+        target = work / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.symlink(points_to, target)
+    git("add", "-A", cwd=work)
+    git("commit", "-q", "--allow-empty", "-m", "S: the canary run's SARIF", cwd=work)
+    s = git("rev-parse", "HEAD", cwd=work)
+    bare = base / owner / "svcdesk.git"
+    bare.parent.mkdir(parents=True)
+    git("clone", "-q", "--bare", str(work), str(bare), cwd=base)
+    git("symbolic-ref", "HEAD", "refs/heads/main", cwd=bare)
+    return {"base": f"file://{base}/", "M": m, "C": c, "S": s}
+
+
+def run_lab5(repo: dict, owner: str, *, lab: str = "5", commit: str | None = None, prior=(), number: int = 77,
+             kind: str = "sarif"):
+    body = form_body(lab=lab, kind=kind, repository=f"{owner}/svcdesk", commit=commit or repo["S"])
+    return receipt.process(body=body, login=owner, issue_number=number, created_at=LAB5_RECEIVED, run_id=555,
+                           roster={owner: f"{owner}/svcdesk"}, deadlines=LAB5_DEADLINES, prior_issues=list(prior),
+                           grants=None, git_base=repo["base"])
+
+
+def test_sarif_receipt_binds_the_sarif_and_the_canary(tmp_path):
+    """design/LAB5.md 7.2: the head of main, the five SARIF files with the sha256 of their exact bytes, and the head
+    of lab5/canary on the remote; `sarif` receipts are not submissions (the cap of three does not apply)."""
+    files = {**FIVE, "bakeoff/sarif/ai-reviewer.sarif": sarif_doc("ai-reviewer", 2)}
+    repo = make_lab5_repo(tmp_path, "lab5-student", files)
+    out = run_lab5(repo, "lab5-student")
+    assert out.status == "receipted", out.comment
+    r = out.receipt
+    assert list(r) == ["lab", "kind", "login", "repository", "tag", "commit", "tree_sha", "archive_sha256",
+                       "canary_commit", "sarif", "attempt", "late", "after_attempt1_due", "received_at", "issue",
+                       "run_id"]
+    assert r["lab"] == 5 and r["kind"] == "sarif" and r["tag"] is None and r["commit"] == repo["S"]
+    assert r["canary_commit"] == repo["C"]
+    assert r["sarif"] == {path: hashlib.sha256(data).hexdigest() for path, data in sorted(files.items())}
+    assert list(r["sarif"]) == sorted(files)
+    assert r["attempt"] == 1 and r["late"] is False and "specs_issues" not in r
+    assert receipt.parse_receipt_comment(out.comment) == r
+    assert receipt.receipt_labels(5, "sarif") == ["receipted", "lab:5", "kind:sarif"]
+    # A seventh sarif receipt is receipted: only submissions are capped, and sarif receipts are counted apart.
+    prior = [prior_issue(n, 5, "sarif") for n in range(1, 7)] + [prior_issue(n, 5, "submission") for n in (8, 9, 10)]
+    out = run_lab5(repo, "lab5-student", prior=prior)
+    assert out.status == "receipted" and out.receipt["attempt"] == 7
+
+
+def test_sarif_digest_is_of_the_exact_bytes_even_for_utf16(tmp_path):
+    """PowerShell 5.1's `>` writes UTF-16 LE with a BOM: the file is still JSON, and the digest is of the bytes as
+    committed, never of a re-encoding."""
+    utf16 = b"\xff\xfe" + json.dumps({"version": "2.1.0", "runs": []}).encode("utf-16-le")
+    bom8 = b"\xef\xbb\xbf" + sarif_doc("gitleaks")
+    files = {**FIVE, "bakeoff/sarif/trivy.sarif": utf16, "bakeoff/sarif/gitleaks.sarif": bom8}
+    repo = make_lab5_repo(tmp_path, "bom-student", files)
+    out = run_lab5(repo, "bom-student")
+    assert out.status == "receipted", out.comment
+    assert out.receipt["sarif"]["bakeoff/sarif/trivy.sarif"] == hashlib.sha256(utf16).hexdigest()
+    assert out.receipt["sarif"]["bakeoff/sarif/gitleaks.sarif"] == hashlib.sha256(bom8).hexdigest()
+
+
+@pytest.mark.parametrize("files, symlinks, fragment", [
+    ({"README.md": "no sarif here\n"}, None, "0 SARIF files under bakeoff/sarif/"),
+    ({**FIVE, "bakeoff/sarif/notes.txt": "hello\n"}, None, "bakeoff/sarif/notes.txt is not named *.sarif"),
+    ({**FIVE, "bakeoff/sarif/old/trivy.sarif": sarif_doc("Trivy")}, None, "is in a subdirectory"),
+    ({**FIVE, "bakeoff/sarif/grype.sarif": b"{not json"}, None, "bakeoff/sarif/grype.sarif is not a JSON document"),
+    ({**FIVE, "bakeoff/sarif/grype.sarif": b'{"version": "2.0.0", "runs": []}'}, None, "is not SARIF 2.1.0"),
+    ({**FIVE, "bakeoff/sarif/grype.sarif": b'{"version": "2.1.0", "runs": {}}'}, None, "a `runs` list"),
+    ({**FIVE, "bakeoff/sarif/grype.sarif": b'[1, 2]'}, None, "is not SARIF 2.1.0"),
+    ({f"bakeoff/sarif/f{n:02d}.sarif": sarif_doc("Trivy") for n in range(21)}, None, "at most 20 are accepted"),
+    (FIVE, {"bakeoff/sarif/zlink.sarif": "trivy.sarif"}, "bakeoff/sarif/zlink.sarif is a symbolic link"),
+])
+def test_sarif_receipt_refuses_a_tree_without_the_sarif(tmp_path, files, symlinks, fragment):
+    repo = make_lab5_repo(tmp_path, "tree-student", files, symlinks=symlinks)
+    out = run_lab5(repo, "tree-student")
+    assert out.status == "refused", out.comment
+    assert out.comment.startswith("itsmlab receipt refused\n") and fragment in out.comment
+    assert "Refused requests do not count as attempts" in out.comment
+
+
+def test_sarif_receipt_refuses_a_file_above_5_mb(tmp_path):
+    big = b'{"version": "2.1.0", "runs": []' + b" " * (5 * 1024 * 1024) + b"}"
+    repo = make_lab5_repo(tmp_path, "big-student", {**FIVE, "bakeoff/sarif/grype.sarif": big})
+    out = run_lab5(repo, "big-student")
+    assert out.status == "refused" and "above the 5242880 byte (5 MB) limit" in out.comment
+    # exactly 5 MB is fine
+    exact = b'{"version": "2.1.0", "runs": []}'
+    exact += b" " * (5 * 1024 * 1024 - len(exact))
+    repo = make_lab5_repo(tmp_path / "exact", "exact-student", {**FIVE, "bakeoff/sarif/grype.sarif": exact})
+    assert run_lab5(repo, "exact-student").status == "receipted"
+
+
+def test_sarif_receipt_needs_the_canary_branch_on_the_remote(tmp_path):
+    repo = make_lab5_repo(tmp_path, "nocanary", FIVE, canary=False)
+    out = run_lab5(repo, "nocanary")
+    assert out.status == "refused"
+    assert "branch `lab5/canary` does not exist" in out.comment and "git push origin lab5/canary" in out.comment
+
+
+def test_sarif_receipt_is_lab_5_only_and_names_the_head_of_main(tmp_path):
+    repo = make_lab5_repo(tmp_path, "rules-student", FIVE)
+    out = run_lab5(repo, "rules-student", lab="4")
+    assert out.status == "refused" and "Kind sarif exists for lab 5 only" in out.comment
+    out = run_lab5(repo, "rules-student", commit=repo["M"])  # an older commit of main
+    assert out.status == "refused" and "not the head of `main`" in out.comment
+    assert "itsmlab submit 5 --kind sarif" in out.comment
+    out = run_lab5(repo, "rules-student", commit=repo["C"])  # the canary commit is not on main
+    assert out.status == "refused" and "is not on `main`" in out.comment
+    with pytest.raises(ReceiptError, match="Commit must be the 40-hex SHA"):
+        receipt.validate_fields({"lab": "5", "kind": "sarif", "repository": "o/n", "commit": ""})
+    sub = receipt.validate_fields({"lab": "5", "kind": "sarif", "repository": "o/n", "commit": "A" * 40,
+                                   "tag": "ignored"})
+    assert (sub.kind, sub.tag, sub.commit) == ("sarif", None, "a" * 40)
+
+
+def test_sarif_receipt_cli_outputs_and_labels(tmp_path):
+    repo = make_lab5_repo(tmp_path, "cli-student", FIVE)
+    roster = tmp_path / "roster.json"
+    roster.write_text(json.dumps({"cli-student": "cli-student/svcdesk"}))
+    deadlines = tmp_path / "deadlines.json"
+    deadlines.write_text(json.dumps(LAB5_DEADLINES))
+    gh_output = tmp_path / "gh_output"
+    env = dict(os.environ, ISSUE_BODY=form_body(lab="5", kind="sarif", repository="cli-student/svcdesk",
+                                                commit=repo["S"]),
+               ISSUE_AUTHOR="cli-student", ISSUE_NUMBER="90", ISSUE_CREATED_AT=LAB5_RECEIVED, RUN_ID="9",
+               GITHUB_OUTPUT=str(gh_output))
+    result = subprocess.run(
+        [sys.executable, str(RECEIPT_PY), "run", "--roster", str(roster), "--deadlines", str(deadlines),
+         "--out", str(tmp_path / "out"), "--git-base", repo["base"]], env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    outputs = dict(line.split("=", 1) for line in gh_output.read_text().splitlines())
+    assert outputs == {"status": "receipted", "kind": "sarif", "lab": "5", "attempt": "1", "login": "cli-student",
+                       "late": "false", "labels": "receipted,lab:5,kind:sarif"}
+    written = json.loads((tmp_path / "out" / "receipt.json").read_text())
+    assert written["canary_commit"] == repo["C"] and len(written["sarif"]) == 5
+
+
+def test_the_published_deadlines_cover_lab_5():
+    data = json.loads((REPO_ROOT / "deadlines.json").read_text())
+    assert "5" in data["labs"]

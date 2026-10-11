@@ -1,7 +1,7 @@
 # Acceptance-receipt request form (design/LAB1.md 7.1). Element ids are the query parameters that
 # `itsmlab submit` prefills (lab, kind, repository, tag, commit, text) and the element labels are
 # the headings receipt.py parses (see FIELD_LABELS there). Change both together.
-name: Receipt request (submission, specs or prediction)
+name: Receipt request (submission, specs, prediction or sarif)
 description: Ask the course bot for an acceptance receipt. One request per issue; the bot answers within a minute.
 title: "[lab] receipt request"
 labels: []
@@ -12,7 +12,8 @@ body:
         Open this form through `itsmlab submit` so the fields are prefilled. The bot reads only the
         fields below and the GitHub account that opened the issue; the account must be on the roster
         with this repository. A refused request never counts as an attempt. Three receipted
-        submissions per lab are the maximum.
+        submissions per lab are the maximum; specs, prediction and sarif receipts are not submissions and do not
+        count toward them.
   - type: dropdown
     id: lab
     attributes:
@@ -33,11 +34,12 @@ body:
     id: kind
     attributes:
       label: Kind
-      description: "submission: a tagged release to grade. specs: freeze your specs before writing code. prediction: bind a prediction text to your current main."
+      description: "submission: a tagged release to grade. specs: freeze your specs before writing code. prediction: bind a prediction text to your current main. sarif (lab 5 only): receipt the canary run's SARIF committed under bakeoff/sarif/ of your current main; the labels of your canary set are revealed on the issue."
       options:
         - submission
         - specs
         - prediction
+        - sarif
     validations:
       required: true
   - type: input
@@ -52,7 +54,7 @@ body:
     id: tag
     attributes:
       label: Tag
-      description: Submissions only. The git tag you pushed (for example lab1/v1). Leave empty for specs and prediction.
+      description: Submissions only. The git tag you pushed (for example lab1/v1). Leave empty for specs, prediction and sarif.
       placeholder: lab1/v1
     validations:
       required: false
@@ -60,7 +62,7 @@ body:
     id: commit
     attributes:
       label: Commit
-      description: Specs and prediction only. The 40-character commit SHA on main printed by `itsmlab submit`. Leave empty for submissions.
+      description: Specs, prediction and sarif only. The 40-character commit SHA of the head of main printed by `itsmlab submit`. Leave empty for submissions.
       placeholder: 0123456789abcdef0123456789abcdef01234567
     validations:
       required: false

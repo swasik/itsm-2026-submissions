@@ -40,6 +40,22 @@ minute with a receipt or a refusal. The lecturer maintains `roster.json`, `deadl
    you extra attempts after a course-side failure).
 5. `itsmlab receipt error`: the bot itself failed (for example GitHub was unreachable). Not your fault;
    retry later or write to the lecturer.
+6. **Lab 5 only: the `sarif` kind** (CI-SPEC.md P-25). Push `lab5/canary`, wait for its run, download its artifact
+   `sarif` into `bakeoff/sarif/` of `main` unchanged, commit, push, then `itsmlab submit 5 --kind sarif` (it names the
+   head of `main`). The bot receipts the commit like a specs freeze and adds two fields right after
+   `archive_sha256`:
+
+   ```
+   "canary_commit": "<the head of lab5/canary on GitHub>",
+   "sarif": {"bakeoff/sarif/gitleaks.sarif": "<sha256>", "bakeoff/sarif/grype.sarif": "<sha256>", ...}
+   ```
+
+   It refuses a commit that is not the head of `main`, a `bakeoff/sarif/` that does not hold 1 to 20 files named
+   `*.sarif` and nothing else (no subdirectory, no symbolic link), a file above 5 MB or one that is not JSON with
+   `"version": "2.1.0"` and a `runs` list, and a repository without the branch `lab5/canary` (push it first). A
+   `sarif` receipt is not a submission: it never counts toward the three attempts. A few minutes later the course
+   answers on the same issue with `itsmlab labels` and your labels (or `itsmlab labels refused` and the reasons);
+   the first receipt that gets labels is the one graded, and a later `sarif` receipt is answered but not graded.
 
 The bot reads only the form fields and the account that opened the issue. The issue title is not read.
 
@@ -50,17 +66,23 @@ through `${{ }}` inside `run:`), the login is `github.event.issue.user.login`. T
 
 1. parses the six form headings (`Lab`, `Kind`, `Repository`, `Tag`, `Commit`, `Text`; unknown headings
    inside a prediction text are kept as text) and validates them with strict patterns (lab 1..8, kind
-   `submission | specs | prediction`, `owner/name`, a git tag name, a 40-hex SHA, non-empty text);
+   `submission | specs | prediction | sarif`, `sarif` for lab 5 only, `owner/name`, a git tag name, a 40-hex SHA,
+   non-empty text);
 2. checks the login against `roster.json` and the repository against the roster's entry;
 3. counts the author's prior issues labelled `receipted`, `lab:<n>` and `kind:<kind>` (fetched with
    `gh api repos/<repo>/issues?labels=receipted&creator=<login>`; the body is never read for this, because the
    author can edit it); a fourth submission is refused;
 4. resolves the tag with `git ls-remote --tags` (the peeled `^{}` line of an annotated tag), or verifies that
-   the given commit is on `main` (fallback: the remote's default branch);
+   the given commit is the head of `main` (fallback: the remote's default branch; every kind but a tagged
+   submission);
 5. clones at the commit and records `tree_sha = git rev-parse <commit>^{tree}` and
    `archive_sha256 = sha256(git archive --format=tar <commit>)`;
 6. `specs`: at least one file of 500+ bytes under `specs/` (not `.gitkeep`/`README.md`) and nothing under
-   `src/` but `src/README.md`; `prediction`: `text_sha256` of the text (CRLF normalised, stripped);
+   `src/` but `src/README.md`; `prediction`: `text_sha256` of the text (CRLF normalised, stripped); `sarif`
+   (design/LAB5.md 7.2): 1 to 20 regular `*.sarif` blobs directly under `bakeoff/sarif/`, each at most 5 MB and a
+   JSON document with `"version": "2.1.0"` and a `runs` list, recorded as `sarif: {path: sha256 of the blob's
+   bytes}` (never re-encoded: a UTF-16 file is hashed as committed), and `canary_commit`, the head of
+   `refs/heads/lab5/canary` from `git ls-remote --heads` (refused when the branch is missing);
 7. reads `deadlines.json` and sets `late` (after `corrections_due`) and `after_attempt1_due` (advisory);
 8. writes `out/comment.md`, `out/receipt.json`, `out/dispatch.json` and the outputs `status`, `kind`,
    `lab`, `attempt`, `login`, `late`.
@@ -119,7 +141,7 @@ uv sync
 uv run pytest -q
 ```
 
-Expected: `53 passed`. The tests use a temporary git repository served over `file://` with an annotated
+Expected: `78 passed`. The tests use a temporary git repository served over `file://` with an annotated
 tag, a lightweight tag and a branch not on `main`, sample issue bodies in the exact shape GitHub renders
 issue forms, and a fake `deadlines.json`; one test cross-checks the form's labels against the parser's
 table so the two cannot drift apart. From the grader root, `uv run pytest -q` runs the same tests together
